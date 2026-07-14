@@ -93,14 +93,16 @@ const CONFIG = {
   //    copy the link it gives you.)
   SHEET_CSV_URL: "https://docs.google.com/spreadsheets/d/1gAoPWu6qMtMtOCPnMiPFqw1D6qMTuvyts7AQiuQEVFA/gviz/tq?tqx=out:csv&gid=1452640727",
 
-  // 2) The exact column header from your Form responses that holds the
+  // 1) The exact column header from your Form responses that holds the
   //    postcode. Whatever someone types here (full postcode or just the
   //    first part) will automatically be trimmed down to just the
   //    outward code (e.g. "SL1 2AB" -> "SL1") before it's plotted, so a
   //    full postcode never ends up visible on the map either way.
-  POSTCODE_COLUMN: "Your Postcode First part only e.g. SL1",
+  //    (This only needs to match the START of the real column header —
+  //    Google Forms sometimes adds extra line breaks/spaces after it.)
+  POSTCODE_COLUMN: "Your Postcode",
 
-  // 2b) Overall opt-in question. The real answer options are:
+  // 1b) Overall opt-in question. The real answer options are:
   //    "Yes, With Names (choose which on next page)"
   //    "Yes, Anonymous (just shows a family is in the general area.)"
   //    "No (you will not appear on the map at all)"
@@ -108,13 +110,13 @@ const CONFIG = {
   CONSENT_COLUMN: "Would you like your family location pin to be shown on the map?",
   CONSENT_YES_MATCH: "Yes",
 
-  // 2c) The checkbox question where people choose what to show on their
+  // 1c) The checkbox question where people choose what to show on their
   //    pin. Google Forms records ticked checkboxes as a single comma
   //    separated string of the option text — TICK_COLUMN is that
   //    question's column header. "Yes, Anonymous" respondents skip this
   //    question, so it'll be blank for them, which already results in
   //    ANONYMOUS_LABEL being shown — no extra handling needed.
-  TICK_COLUMN: "What would you like shown next to your pin? You can tick more than one.",
+  TICK_COLUMN: "What would you like shown next to your pin?",
 
   // 3) Which fields can appear in a pin's popup. Each one only shows if
   //    the person ticked the matching option in TICK_COLUMN above *and*
@@ -181,8 +183,25 @@ function extractOutcode(input) {
   return noSpaces;
 }
 
+// Google Forms sometimes bakes line breaks and extra spaces from a question's
+// description into the actual column header. This looks up a column by its
+// stable leading text, ignoring any whitespace differences after that.
+function normalizeWhitespace(s) {
+  return String(s).replace(/\s+/g, ' ').trim();
+}
+
+function getColumnValue(row, columnPrefix) {
+  const normalizedPrefix = normalizeWhitespace(columnPrefix);
+  for (const key in row) {
+    if (normalizeWhitespace(key).startsWith(normalizedPrefix)) {
+      return row[key];
+    }
+  }
+  return undefined;
+}
+
 function hasConsented(row) {
-  const answer = row[CONFIG.CONSENT_COLUMN];
+  const answer = getColumnValue(row, CONFIG.CONSENT_COLUMN);
   if (!answer) return false;
   return String(answer).toLowerCase().includes(CONFIG.CONSENT_YES_MATCH.toLowerCase());
 }
@@ -220,10 +239,10 @@ async function lookupOutcodes(outcodes) {
 }
 
 function buildPopupHtml(row) {
-  const ticked = String(row[CONFIG.TICK_COLUMN] || '');
+  const ticked = String(getColumnValue(row, CONFIG.TICK_COLUMN) || '');
   const lines = CONFIG.POPUP_FIELDS
-    .filter(f => ticked.includes(f.tickValue) && row[f.column] !== undefined && String(row[f.column]).trim() !== '')
-    .map(f => `<div><b>${f.label}:</b> ${escapeHtml(row[f.column])}</div>`);
+    .filter(f => ticked.includes(f.tickValue) && getColumnValue(row, f.column) !== undefined && String(getColumnValue(row, f.column)).trim() !== '')
+    .map(f => `<div><b>${f.label}:</b> ${escapeHtml(getColumnValue(row, f.column))}</div>`);
   return lines.length ? lines.join('') : `<i>${escapeHtml(CONFIG.ANONYMOUS_LABEL)}</i>`;
 }
 
@@ -259,14 +278,14 @@ async function renderRows(rows) {
   markerLayer.clearLayers();
 
   const totalRows = rows.length;
-  const consentedRows = rows.filter(r => hasConsented(r) && r[CONFIG.POSTCODE_COLUMN] && String(r[CONFIG.POSTCODE_COLUMN]).trim());
-  const outcodes = consentedRows.map(r => extractOutcode(r[CONFIG.POSTCODE_COLUMN]));
+  const consentedRows = rows.filter(r => hasConsented(r) && getColumnValue(r, CONFIG.POSTCODE_COLUMN) && String(getColumnValue(r, CONFIG.POSTCODE_COLUMN)).trim());
+  const outcodes = consentedRows.map(r => extractOutcode(getColumnValue(r, CONFIG.POSTCODE_COLUMN)));
   await lookupOutcodes(outcodes);
 
   let placed = 0;
   let geocodeFailures = [];
   for (const row of consentedRows) {
-    const outcode = extractOutcode(row[CONFIG.POSTCODE_COLUMN]);
+    const outcode = extractOutcode(getColumnValue(row, CONFIG.POSTCODE_COLUMN));
     const coords = outcodeCache[outcode];
     if (!coords) { geocodeFailures.push(outcode); continue; }
 
@@ -284,8 +303,8 @@ async function renderRows(rows) {
   console.log('DEBUG total rows fetched:', totalRows);
   console.log('DEBUG rows passing consent + postcode filter:', consentedRows.length);
   console.log('DEBUG outcodes that failed to geocode:', geocodeFailures);
-  console.log('DEBUG column names Papa found on first row:', rows[0] ? Object.keys(rows[0]) : '(no rows)');
-  console.log('DEBUG first raw row:', rows[0]);
+  console.log('DEBUG column names Papa found on first row:', rows[0] ? JSON.stringify(Object.keys(rows[0])) : '(no rows)');
+  console.log('DEBUG first raw row:', rows[0] ? JSON.stringify(rows[0]) : '(no rows)');
   if (totalRows > 0 && consentedRows.length === 0) {
     showBanner(`Loaded ${totalRows} row(s) from the sheet, but none matched the expected consent/postcode column names. Open the browser console (F12) to see the exact column names found — compare them against CONFIG in the file.`);
   } else if (consentedRows.length > 0 && placed === 0) {
