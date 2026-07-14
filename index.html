@@ -258,15 +258,17 @@ async function loadData() {
 async function renderRows(rows) {
   markerLayer.clearLayers();
 
+  const totalRows = rows.length;
   const consentedRows = rows.filter(r => hasConsented(r) && r[CONFIG.POSTCODE_COLUMN] && String(r[CONFIG.POSTCODE_COLUMN]).trim());
   const outcodes = consentedRows.map(r => extractOutcode(r[CONFIG.POSTCODE_COLUMN]));
   await lookupOutcodes(outcodes);
 
   let placed = 0;
+  let geocodeFailures = [];
   for (const row of consentedRows) {
     const outcode = extractOutcode(row[CONFIG.POSTCODE_COLUMN]);
     const coords = outcodeCache[outcode];
-    if (!coords) continue;
+    if (!coords) { geocodeFailures.push(outcode); continue; }
 
     // small random jitter so multiple people in the same outcode don't stack exactly on top of each other
     const jitter = () => (Math.random() - 0.5) * 0.02;
@@ -277,6 +279,19 @@ async function renderRows(rows) {
   }
 
   statusEl.textContent = `${placed} location${placed === 1 ? '' : 's'} shown`;
+
+  // --- Temporary diagnostics: remove this block once everything is confirmed working ---
+  console.log('DEBUG total rows fetched:', totalRows);
+  console.log('DEBUG rows passing consent + postcode filter:', consentedRows.length);
+  console.log('DEBUG outcodes that failed to geocode:', geocodeFailures);
+  console.log('DEBUG column names Papa found on first row:', rows[0] ? Object.keys(rows[0]) : '(no rows)');
+  console.log('DEBUG first raw row:', rows[0]);
+  if (totalRows > 0 && consentedRows.length === 0) {
+    showBanner(`Loaded ${totalRows} row(s) from the sheet, but none matched the expected consent/postcode column names. Open the browser console (F12) to see the exact column names found — compare them against CONFIG in the file.`);
+  } else if (consentedRows.length > 0 && placed === 0) {
+    showBanner(`Found ${consentedRows.length} consenting row(s) but couldn't geocode: ${geocodeFailures.join(', ')}. Check these are valid UK postcode areas.`);
+  }
+  // --- End temporary diagnostics ---
 }
 
 const SAMPLE_ROWS = [
