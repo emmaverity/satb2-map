@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SATB2 Family Locations</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Leaflet (free, open-source map library) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- PapaParse (free, reads the Google Sheet CSV) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+<style>
+  :root {
+    --ink: #1f2a24;
+    --paper: #f6f4ee;
+    --moss: #3f6b52;
+    --moss-dark: #2c4d3a;
+    --clay: #b5622b;
+    --line: #d9d3c3;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  header {
+    padding: 14px 20px;
+    background: var(--moss-dark);
+    color: var(--paper);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  header h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  #status {
+    font-size: 12.5px;
+    color: #cfe3d6;
+  }
+  #map {
+    flex: 1;
+    min-height: 300px;
+  }
+  .leaflet-popup-content {
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .leaflet-popup-content b {
+    color: var(--moss-dark);
+  }
+  #banner {
+    background: #fff8ec;
+    border-bottom: 1px solid var(--line);
+    padding: 8px 20px;
+    font-size: 12.5px;
+    color: #6b5d3f;
+    display: none;
+  }
+  #banner.show { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📍 SATB2 Family Locations</h1>
+  <span id="status">Loading…</span>
+</header>
+<div id="banner"></div>
+<div id="map"></div>
+
+<script>
+/* ======================================================================
+   SETTINGS — this is the only section you should need to edit.
+   ====================================================================== */
+const CONFIG = {
+
+  // 1) Paste your published Google Sheet CSV link here.
+  //    (Google Sheet -> File -> Share -> Publish to web -> choose the
+  //    response sheet + "Comma-separated values (.csv)" -> Publish, then
+  //    copy the link it gives you.)
+  SHEET_CSV_URL: "https://docs.google.com/spreadsheets/d/1gAoPWu6qMtMtOCPnMiPFqw1D6qMTuvyts7AQiuQEVFA/gviz/tq?tqx=out:csv&gid=1452640727",
+
+  // 2) The exact column header from your Form responses that holds the
+  //    postcode. Whatever someone types here (full postcode or just the
+  //    first part) will automatically be trimmed down to just the
+  //    outward code (e.g. "SL1 2AB" -> "SL1") before it's plotted, so a
+  //    full postcode never ends up visible on the map either way.
+  POSTCODE_COLUMN: "Your Postcode First part only e.g. SL1",
+
+  // 2b) Overall opt-in question. The real answer options are:
+  //    "Yes, With Names (choose which on next page)"
+  //    "Yes, Anonymous (just shows a family is in the general area.)"
+  //    "No (you will not appear on the map at all)"
+  //    Matching on "Yes" catches both Yes options and excludes No.
+  CONSENT_COLUMN: "Would you like your family location pin to be shown on the map?",
+  CONSENT_YES_MATCH: "Yes",
+
+  // 2c) The checkbox question where people choose what to show on their
+  //    pin. Google Forms records ticked checkboxes as a single comma
+  //    separated string of the option text — TICK_COLUMN is that
+  //    question's column header. "Yes, Anonymous" respondents skip this
+  //    question, so it'll be blank for them, which already results in
+  //    ANONYMOUS_LABEL being shown — no extra handling needed.
+  TICK_COLUMN: "What would you like shown next to your pin? You can tick more than one.",
+
+  // 3) Which fields can appear in a pin's popup. Each one only shows if
+  //    the person ticked the matching option in TICK_COLUMN above *and*
+  //    they actually filled the field in. If someone ticked neither
+  //    option (or skipped the question as an Anonymous responder),
+  //    ANONYMOUS_LABEL is shown instead so the pin still appears but
+  //    with nothing identifying.
+  POPUP_FIELDS: [
+    { column: "Parent/Carer", label: "Parent", tickValue: "Show Parent/carer name(s) on pin" },
+    { column: "SATB2 Child(ren)", label: "Child", tickValue: "Show Child(ren)'s name(s) on pin" },
+  ],
+  ANONYMOUS_LABEL: "A family in this area",
+
+  // 4) Zoom limits. This is a hard cap for every visitor, on top of the
+  //    fact that pins sit at postcode-area level, not exact addresses.
+  MIN_ZOOM: 6,
+  MAX_ZOOM: 11,
+
+  // 5) Starting view (centred on the UK).
+  START_CENTER: [54.5, -3.5],
+  START_ZOOM: 6,
+};
+/* ====================================================================== */
+
+const statusEl = document.getElementById('status');
+const bannerEl = document.getElementById('banner');
+
+function showBanner(msg) {
+  bannerEl.textContent = msg;
+  bannerEl.classList.add('show');
+}
+
+const map = L.map('map', {
+  minZoom: CONFIG.MIN_ZOOM,
+  maxZoom: CONFIG.MAX_ZOOM,
+  maxBounds: [[49.5, -11], [61, 2]],
+  maxBoundsViscosity: 0.6,
+}).setView(CONFIG.START_CENTER, CONFIG.START_ZOOM);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: CONFIG.MAX_ZOOM,
+}).addTo(map);
+
+const markerLayer = L.layerGroup().addTo(map);
+
+// Pulls just the outward code (e.g. "SL1") out of whatever someone typed,
+// whether that was "SL1", "SL1 2AB", or "sl12ab". This is what keeps the
+// map safe even if a family types their full postcode by mistake.
+function extractOutcode(input) {
+  if (!input) return '';
+  let cleaned = String(input).trim().toUpperCase();
+
+  let match = cleaned.match(/^([A-Z]{1,2}[0-9][A-Z0-9]?)\s*[0-9][A-Z]{2}$/);
+  if (match) return match[1];
+
+  match = cleaned.match(/^([A-Z]{1,2}[0-9][A-Z0-9]?)$/);
+  if (match) return match[1];
+
+  const noSpaces = cleaned.replace(/[^A-Z0-9]/g, '');
+  match = noSpaces.match(/^([A-Z]{1,2}[0-9][A-Z0-9]?)[0-9][A-Z]{2}$/);
+  if (match) return match[1];
+
+  return noSpaces;
+}
+
+function hasConsented(row) {
+  const answer = row[CONFIG.CONSENT_COLUMN];
+  if (!answer) return false;
+  return String(answer).toLowerCase().includes(CONFIG.CONSENT_YES_MATCH.toLowerCase());
+}
+
+// simple in-memory cache so repeat outcodes aren't looked up twice per load
+const outcodeCache = {};
+
+async function lookupOutcodes(outcodes) {
+  const unique = [...new Set(outcodes.map(o => o.trim().toUpperCase()).filter(Boolean))];
+  const toFetch = unique.filter(o => !outcodeCache[o]);
+
+  for (let i = 0; i < toFetch.length; i += 100) {
+    const batch = toFetch.slice(i, i + 100);
+    try {
+      const res = await fetch('https://api.postcodes.io/outcodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcodes: batch }),
+      });
+      const data = await res.json();
+      if (data && data.result) {
+        for (const entry of data.result) {
+          if (entry.result) {
+            outcodeCache[entry.query.toUpperCase()] = {
+              lat: entry.result.latitude,
+              lng: entry.result.longitude,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Postcode lookup failed for batch', batch, e);
+    }
+  }
+}
+
+function buildPopupHtml(row) {
+  const ticked = String(row[CONFIG.TICK_COLUMN] || '');
+  const lines = CONFIG.POPUP_FIELDS
+    .filter(f => ticked.includes(f.tickValue) && row[f.column] !== undefined && String(row[f.column]).trim() !== '')
+    .map(f => `<div><b>${f.label}:</b> ${escapeHtml(row[f.column])}</div>`);
+  return lines.length ? lines.join('') : `<i>${escapeHtml(CONFIG.ANONYMOUS_LABEL)}</i>`;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+async function loadData() {
+  if (!CONFIG.SHEET_CSV_URL || CONFIG.SHEET_CSV_URL.includes('PASTE_YOUR')) {
+    statusEl.textContent = 'Not configured yet';
+    showBanner('Showing sample data. Edit CONFIG.SHEET_CSV_URL near the top of the file to connect your real Google Sheet.');
+    renderRows(SAMPLE_ROWS);
+    return;
+  }
+
+  statusEl.textContent = 'Loading…';
+  try {
+    const res = await fetch(CONFIG.SHEET_CSV_URL);
+    const csvText = await res.text();
+    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+    renderRows(parsed.data);
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = 'Could not load data';
+    showBanner('Could not load the Google Sheet. Check that it is Published to the web as CSV, and that the link in CONFIG.SHEET_CSV_URL is correct.');
+  }
+}
+
+async function renderRows(rows) {
+  markerLayer.clearLayers();
+
+  const consentedRows = rows.filter(r => hasConsented(r) && r[CONFIG.POSTCODE_COLUMN] && String(r[CONFIG.POSTCODE_COLUMN]).trim());
+  const outcodes = consentedRows.map(r => extractOutcode(r[CONFIG.POSTCODE_COLUMN]));
+  await lookupOutcodes(outcodes);
+
+  let placed = 0;
+  for (const row of consentedRows) {
+    const outcode = extractOutcode(row[CONFIG.POSTCODE_COLUMN]);
+    const coords = outcodeCache[outcode];
+    if (!coords) continue;
+
+    // small random jitter so multiple people in the same outcode don't stack exactly on top of each other
+    const jitter = () => (Math.random() - 0.5) * 0.02;
+    const marker = L.marker([coords.lat + jitter(), coords.lng + jitter()]);
+    marker.bindPopup(buildPopupHtml(row));
+    marker.addTo(markerLayer);
+    placed++;
+  }
+
+  statusEl.textContent = `${placed} location${placed === 1 ? '' : 's'} shown`;
+}
+
+const SAMPLE_ROWS = [
+  { "Parent/Carer": "Sample parent — Reading", "SATB2 Child(ren)": "Sample child", "Your Postcode First part only e.g. SL1": "RG1 2AB", "Would you like your family location pin to be shown on the map?": "Yes, With Names (choose which on next page)", "What would you like shown next to your pin? You can tick more than one.": "Show Parent/carer name(s) on pin, Show Child(ren)'s name(s) on pin" },
+  { "Parent/Carer": "Sample parent — Slough", "SATB2 Child(ren)": "Sample child", "Your Postcode First part only e.g. SL1": "SL1", "Would you like your family location pin to be shown on the map?": "Yes, With Names (choose which on next page)", "What would you like shown next to your pin? You can tick more than one.": "Show Parent/carer name(s) on pin" },
+  { "Parent/Carer": "Sample parent — Manchester", "SATB2 Child(ren)": "Sample child — Manchester", "Your Postcode First part only e.g. SL1": "M1 1AA", "Would you like your family location pin to be shown on the map?": "Yes, With Names (choose which on next page)", "What would you like shown next to your pin? You can tick more than one.": "Show Child(ren)'s name(s) on pin" },
+  { "Parent/Carer": "Sample parent — Leeds", "SATB2 Child(ren)": "Sample child — Leeds", "Your Postcode First part only e.g. SL1": "LS1", "Would you like your family location pin to be shown on the map?": "Yes, Anonymous (just shows a family is in the general area.)", "What would you like shown next to your pin? You can tick more than one.": "" },
+  { "Parent/Carer": "Sample — hidden (opted out)", "SATB2 Child(ren)": "", "Your Postcode First part only e.g. SL1": "BS1", "Would you like your family location pin to be shown on the map?": "No (you will not appear on the map at all)", "What would you like shown next to your pin? You can tick more than one.": "" },
+];
+
+loadData();
+// Refresh automatically every 2 minutes so new Form responses appear without anyone reloading
+setInterval(loadData, 2 * 60 * 1000);
+</script>
+
+</body>
+</html>
