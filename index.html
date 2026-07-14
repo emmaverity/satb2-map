@@ -213,27 +213,23 @@ async function lookupOutcodes(outcodes) {
   const unique = [...new Set(outcodes.map(o => o.trim().toUpperCase()).filter(Boolean))];
   const toFetch = unique.filter(o => !outcodeCache[o]);
 
-  for (let i = 0; i < toFetch.length; i += 100) {
-    const batch = toFetch.slice(i, i + 100);
+  // postcodes.io has no bulk endpoint for outward codes (only for full
+  // postcodes), so each one is looked up individually. Fine for the
+  // small numbers involved here.
+  for (const outcode of toFetch) {
     try {
-      const res = await fetch('https://api.postcodes.io/outcodes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outcodes: batch }),
-      });
-      const data = await res.json();
-      if (data && data.result) {
-        for (const entry of data.result) {
-          if (entry.result) {
-            outcodeCache[entry.query.toUpperCase()] = {
-              lat: entry.result.latitude,
-              lng: entry.result.longitude,
-            };
-          }
+      const res = await fetch(`https://api.postcodes.io/outcodes/${encodeURIComponent(outcode)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.result) {
+          outcodeCache[outcode] = {
+            lat: data.result.latitude,
+            lng: data.result.longitude,
+          };
         }
       }
     } catch (e) {
-      console.error('Postcode lookup failed for batch', batch, e);
+      console.error('Postcode lookup failed for', outcode, e);
     }
   }
 }
