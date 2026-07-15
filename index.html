@@ -14,12 +14,12 @@
 
 <style>
   :root {
-    --ink: #1f2a24;
-    --paper: #f6f4ee;
-    --moss: #3f6b52;
-    --moss-dark: #2c4d3a;
-    --clay: #b5622b;
-    --line: #d9d3c3;
+    --ink: #2b1a2a;
+    --paper: #f9f5f9;
+    --brand-purple: #92278f;
+    --brand-purple-dark: #5e175b;
+    --brand-green: #c1d22b;
+    --line: #e2d3e1;
   }
   html, body { height: 100%; margin: 0; }
   body {
@@ -31,14 +31,27 @@
     height: 100%;
   }
   header {
-    padding: 14px 20px;
-    background: var(--moss-dark);
+    padding: 12px 20px;
+    background: var(--brand-purple-dark);
     color: var(--paper);
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
+  }
+  header .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header img.logo {
+    height: 34px;
+    width: 34px;
+    border-radius: 6px;
+    background: #fff;
+    object-fit: contain;
+    padding: 2px;
   }
   header h1 {
     font-size: 17px;
@@ -48,7 +61,7 @@
   }
   #status {
     font-size: 12.5px;
-    color: #cfe3d6;
+    color: #f1d9f0;
   }
   #map {
     flex: 1;
@@ -59,14 +72,14 @@
     line-height: 1.5;
   }
   .leaflet-popup-content b {
-    color: var(--moss-dark);
+    color: var(--brand-purple-dark);
   }
   #banner {
-    background: #fff8ec;
+    background: #fbfbe9;
     border-bottom: 1px solid var(--line);
     padding: 8px 20px;
     font-size: 12.5px;
-    color: #6b5d3f;
+    color: #5c621a;
     display: none;
   }
   #banner.show { display: block; }
@@ -75,7 +88,10 @@
 <body>
 
 <header>
-  <h1>📍 SATB2 Family Locations</h1>
+  <div class="brand">
+    <img class="logo" src="https://satb2gene.org.uk/wp-content/uploads/2020/06/SATB2-logo-180x180.png" alt="SATB2 Gene Trust UK logo">
+    <h1>SATB2 Family Locations</h1>
+  </div>
   <span id="status">Loading…</span>
 </header>
 <div id="banner"></div>
@@ -162,6 +178,19 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const markerLayer = L.layerGroup().addTo(map);
+
+// Custom pin in the charity's brand purple, replacing Leaflet's default blue marker.
+const PIN_COLOR = "#92278f";
+const purpleIcon = L.divIcon({
+  className: 'brand-pin',
+  html: `<svg width="26" height="38" viewBox="0 0 26 38" xmlns="http://www.w3.org/2000/svg">
+           <path d="M13 0C5.8 0 0 5.8 0 13c0 9.75 13 25 13 25s13-15.25 13-25C26 5.8 20.2 0 13 0z" fill="${PIN_COLOR}" stroke="#ffffff" stroke-width="1.5"/>
+           <circle cx="13" cy="13" r="5.5" fill="#ffffff"/>
+         </svg>`,
+  iconSize: [26, 38],
+  iconAnchor: [13, 38],
+  popupAnchor: [0, -34],
+});
 
 // Pulls just the outward code (e.g. "SL1") out of whatever someone typed,
 // whether that was "SL1", "SL1 2AB", or "sl12ab". This is what keeps the
@@ -287,7 +316,7 @@ async function renderRows(rows) {
 
     // small random jitter so multiple people in the same outcode don't stack exactly on top of each other
     const jitter = () => (Math.random() - 0.5) * 0.02;
-    const marker = L.marker([coords.lat + jitter(), coords.lng + jitter()]);
+    const marker = L.marker([coords.lat + jitter(), coords.lng + jitter()], { icon: purpleIcon });
     marker.bindPopup(buildPopupHtml(row));
     marker.addTo(markerLayer);
     placed++;
